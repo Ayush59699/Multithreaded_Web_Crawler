@@ -1,0 +1,9 @@
+SRC_DOMAIN -> DEST_DOMAIN
+localhost:8080 -> localhost:8080
+localhost:8080 -> localhost:8080
+localhost:8080 -> localhost:8080
+localhost:8080 -> localhost:8080
+localhost:8080 -> localhost:8080
+localhost:8080 -> localhost:8080
+localhost:8080 -> localhost:8080
+localhost:8080 -> localhost:8080

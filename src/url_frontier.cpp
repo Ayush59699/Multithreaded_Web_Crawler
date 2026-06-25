@@ -2,16 +2,32 @@
 #include <chrono>
 #include <thread>
 
-void URLFrontier::init(const std::string& seed_url) {
-    std::lock_guard<std::mutex> lock(queue_mutex);
+URLFrontier::URLFrontier() : queue_mutex(nullptr, InstrumentedMutex::Category::QUEUE) {}
+
+void URLFrontier::init(const std::string& seed_url, CrawlerConfig* config, MetricsCollector* metrics) {
+    config_ = config;
+    metrics_ = metrics;
+    queue_mutex.set_metrics(metrics);
+
+    InstrumentedLockGuard lock(queue_mutex);
+    to_visit = std::queue<std::string>();
+    visited.clear();
+    visited_list_.clear();
+
     to_visit.push(seed_url);
-    visited.insert(seed_url);
+    if (config_ && !config_->use_optimized_duplicate_detection) {
+        visited_list_.push_back(seed_url);
+    } else {
+        visited.insert(seed_url);
+    }
     queue_size_.store(1);
     is_done.store(false);
 }
 
+
+
 bool URLFrontier::try_dequeue(std::string& url) {
-    std::lock_guard<std::mutex> lock(queue_mutex);
+    InstrumentedLockGuard lock(queue_mutex);
     
     if (to_visit.empty()) {
         return false;
@@ -24,26 +40,46 @@ bool URLFrontier::try_dequeue(std::string& url) {
 }
 
 bool URLFrontier::add_if_not_visited(const std::string& url) {
-    // Validate URL first (no lock needed)
     if (url.empty() || url.length() > 10000) {
         return false;
     }
     
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    
-    // Check if already visited
-    if (visited.find(url) != visited.end()) {
-        return false;
+    if (metrics_) {
+        metrics_->record_url_processed();
     }
+
+    InstrumentedLockGuard lock(queue_mutex);
     
-    // Insert and add to queue
-    auto result = visited.insert(url);
-    if (result.second) {
+    if (config_ && !config_->use_optimized_duplicate_detection) {
+        // Naive duplicate detection - O(N) vector scan
+        for (const auto& v : visited_list_) {
+            if (v == url) {
+                if (metrics_) metrics_->record_duplicate_url_rejected();
+                return false;
+            }
+        }
+        visited_list_.push_back(url);
         to_visit.push(url);
         queue_size_.store(to_visit.size());
+        if (metrics_) metrics_->record_url_enqueued();
         return true;
+    } else {
+        // Optimized duplicate detection - O(1) unordered_set lookup
+        if (visited.find(url) != visited.end()) {
+            if (metrics_) metrics_->record_duplicate_url_rejected();
+            return false;
+        }
+        
+        auto result = visited.insert(url);
+        if (result.second) {
+            to_visit.push(url);
+            queue_size_.store(to_visit.size());
+            if (metrics_) metrics_->record_url_enqueued();
+            return true;
+        }
     }
     
+    if (metrics_) metrics_->record_duplicate_url_rejected();
     return false;
 }
 
@@ -56,6 +92,10 @@ size_t URLFrontier::queue_size() const {
 }
 
 size_t URLFrontier::visited_count() const {
+    InstrumentedLockGuard lock(queue_mutex);
+    if (config_ && !config_->use_optimized_duplicate_detection) {
+        return visited_list_.size();
+    }
     return visited.size();
 }
 
@@ -64,33 +104,38 @@ void URLFrontier::mark_done() {
 }
 
 std::queue<std::string> URLFrontier::copy_queue() const {
-    std::lock_guard<std::mutex> lock(queue_mutex);
+    InstrumentedLockGuard lock(queue_mutex);
     return to_visit;
 }
 
 std::unordered_set<std::string> URLFrontier::copy_visited() const {
-    std::lock_guard<std::mutex> lock(queue_mutex);
+    InstrumentedLockGuard lock(queue_mutex);
+    if (config_ && !config_->use_optimized_duplicate_detection) {
+        return std::unordered_set<std::string>(visited_list_.begin(), visited_list_.end());
+    }
     return visited;
 }
 
 int URLFrontier::batch_enqueue(const std::vector<std::string>& urls) {
     int added = 0;
-    
     for (const auto& url : urls) {
         if (add_if_not_visited(url)) {
             added++;
         }
     }
-    
     return added;
 } 
 
 std::queue<std::string> URLFrontier::get_queue_snapshot() {
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    return to_visit; // copy
+    InstrumentedLockGuard lock(queue_mutex);
+    return to_visit;
 }
 
 std::unordered_set<std::string> URLFrontier::get_visited_snapshot() {
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    return visited; // copy
+    InstrumentedLockGuard lock(queue_mutex);
+    if (config_ && !config_->use_optimized_duplicate_detection) {
+        return std::unordered_set<std::string>(visited_list_.begin(), visited_list_.end());
+    }
+    return visited;
 }
+

@@ -1,0 +1,3 @@
+seed_url,max_pages,num_threads,total_ms,pages_crawled,throughput
+http://localhost:8080/,50,4,405,53,543.08
+http://localhost:8080/,50,4,404,53,530.42

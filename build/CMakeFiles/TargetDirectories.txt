@@ -1,0 +1,6 @@
+/mnt/d/ANTIGRAVITY TESTS/GOOGLE Projects/MultiThreaded Web Crawler/multithreaded-web-crawler/build/CMakeFiles/crawler_core.dir
+/mnt/d/ANTIGRAVITY TESTS/GOOGLE Projects/MultiThreaded Web Crawler/multithreaded-web-crawler/build/CMakeFiles/crawler.dir
+/mnt/d/ANTIGRAVITY TESTS/GOOGLE Projects/MultiThreaded Web Crawler/multithreaded-web-crawler/build/CMakeFiles/benchmark_runner.dir
+/mnt/d/ANTIGRAVITY TESTS/GOOGLE Projects/MultiThreaded Web Crawler/multithreaded-web-crawler/build/CMakeFiles/clean-all.dir
+/mnt/d/ANTIGRAVITY TESTS/GOOGLE Projects/MultiThreaded Web Crawler/multithreaded-web-crawler/build/CMakeFiles/edit_cache.dir
+/mnt/d/ANTIGRAVITY TESTS/GOOGLE Projects/MultiThreaded Web Crawler/multithreaded-web-crawler/build/CMakeFiles/rebuild_cache.dir

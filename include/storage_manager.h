@@ -5,7 +5,12 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
-#include <numeric>
+#include <map>
+#include <memory>
+#include "crawler_config.h"
+#include "metrics_collector.h"
+#include "instrumented_mutex.h"
+
 
 /**
  * Per-thread local buffer for graph data
@@ -17,17 +22,28 @@ struct ThreadLocalBuffer {
     std::unordered_set<std::string> local_domains;
 };
 
+struct NaiveThreadLocalBuffer {
+    std::vector<std::pair<std::string, std::string>> edge_list;
+    std::vector<std::pair<std::string, int>> visit_count_list;
+    std::vector<std::string> local_domains;
+};
+
+
 /**
  * Storage manager with thread-local buffers
  * Main thread merges all buffers after crawling completes
  */
 class StorageManager {
 public:
+    StorageManager();
+
     /**
      * Initialize storage with thread count
      * @param num_threads Number of worker threads
+     * @param config Config pointer
+     * @param metrics Metrics collector pointer
      */
-    void init(int num_threads);
+    void init(int num_threads, CrawlerConfig* config = nullptr, MetricsCollector* metrics = nullptr);
     
     /**
      * Get thread-local buffer for current thread
@@ -90,12 +106,25 @@ public:
 
 private:
     std::vector<ThreadLocalBuffer> thread_buffers;
+    std::vector<NaiveThreadLocalBuffer> naive_thread_buffers;
     
     // Merged graph after all threads complete
     std::unordered_map<std::string, std::vector<std::string>> link_graph;
     std::unordered_map<std::string, int> visit_count;
+    
+    // Naive merged graph
+    std::vector<std::pair<std::string, std::string>> naive_link_graph;
+    std::vector<std::pair<std::string, int>> naive_visit_count;
+    
     std::unordered_map<std::string, double> pagerank;
     
+    CrawlerConfig* config_{nullptr};
+    MetricsCollector* metrics_{nullptr};
+    mutable InstrumentedMutex shared_storage_mutex;
+
+    void merge_all_buffers_naive();
+    void compute_pagerank_naive(int iterations);
+
     /**
      * Internal PageRank calculation
      */

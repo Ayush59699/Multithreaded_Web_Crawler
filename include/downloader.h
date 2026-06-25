@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 
+class MetricsCollector;
+
+
 class Downloader {
 public:
     /**
@@ -12,6 +15,7 @@ public:
      * @return HTML content as string, empty string on failure
      */
     std::string download(const std::string& url);
+    void set_metrics(MetricsCollector* metrics) { metrics_ = metrics; }
     
     /**
      * Extract domain from URL
@@ -35,6 +39,8 @@ public:
     std::string get_protocol(const std::string& url);
 
 private:
+    MetricsCollector* metrics_{nullptr};
+
     /**
      * libcurl write callback for capturing response
      */

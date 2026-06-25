@@ -5,7 +5,8 @@
 #include <algorithm>
 
 std::vector<std::string> Parser::extract_links(const std::string& html, 
-                                               const std::string& base_url) {
+                                               const std::string& base_url,
+                                               bool normalize) {
     std::vector<std::string> links;
     
     if (html.empty() || html.length() > 100000000) {  // 100MB safety limit
@@ -34,7 +35,9 @@ std::vector<std::string> Parser::extract_links(const std::string& html,
             }
             
             // Normalize and validate
-            url = normalize_url(url);
+            if (normalize) {
+                url = normalize_url(url);
+            }
             if (is_valid_url(url)) {
                 links.push_back(url);
             }

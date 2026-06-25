@@ -1,8 +1,10 @@
 #include "downloader.h"
 #include "utils.h"
+#include "metrics_collector.h"
 #include <curl/curl.h>
 #include <regex>
 #include <iostream>
+#include <chrono>
 
 // libcurl write callback
 size_t Downloader::write_callback(void* contents, size_t size, 
@@ -14,6 +16,9 @@ size_t Downloader::write_callback(void* contents, size_t size,
 std::string Downloader::download(const std::string& url) {
     CURL* curl = curl_easy_init();
     if (!curl) {
+        if (metrics_) {
+            metrics_->record_download_failed();
+        }
         return "";
     }
 
@@ -29,9 +34,19 @@ std::string Downloader::download(const std::string& url) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     
+    auto t0 = std::chrono::high_resolution_clock::now();
     CURLcode res = curl_easy_perform(curl);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    
+    double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    if (metrics_) {
+        metrics_->record_network_wait_time(ms);
+    }
     
     if (res != CURLE_OK) {
+        if (metrics_) {
+            metrics_->record_download_failed();
+        }
         curl_easy_cleanup(curl);
         return "";
     }
@@ -47,6 +62,9 @@ std::string Downloader::download(const std::string& url) {
         return readBuffer;
     }
     
+    if (metrics_) {
+        metrics_->record_download_failed();
+    }
     return "";
 }
 

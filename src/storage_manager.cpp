@@ -5,11 +5,35 @@
 #include <iostream>
 #include <cmath>
 #include <iomanip>
+#include <algorithm>
 
-void StorageManager::init(int num_threads)
+StorageManager::StorageManager() : shared_storage_mutex(nullptr, InstrumentedMutex::Category::STORAGE) {}
+
+void StorageManager::init(int num_threads, CrawlerConfig* config, MetricsCollector* metrics)
 {
-    thread_buffers.resize(num_threads);
+    config_ = config;
+    metrics_ = metrics;
+    shared_storage_mutex.set_metrics(metrics);
+    
+    thread_buffers.clear();
+    naive_thread_buffers.clear();
+    link_graph.clear();
+    visit_count.clear();
+    naive_link_graph.clear();
+    naive_visit_count.clear();
+    pagerank.clear();
+
+    if (config_ && !config_->use_optimized_graph_storage)
+    {
+        naive_thread_buffers.resize(num_threads);
+    }
+    else
+    {
+        thread_buffers.resize(num_threads);
+    }
 }
+
+
 
 ThreadLocalBuffer &StorageManager::get_thread_buffer(int thread_id)
 {
@@ -19,7 +43,27 @@ ThreadLocalBuffer &StorageManager::get_thread_buffer(int thread_id)
 void StorageManager::add_page(int thread_id, const std::string &domain,
                               const std::vector<std::string> &outgoing_links)
 {
-    auto &buffer = thread_buffers[thread_id];
+    int target_thread_id = thread_id;
+    bool lock_needed = false;
+
+    if (config_)
+    {
+        if (!config_->enable_thread_local_storage)
+        {
+            target_thread_id = 0;
+            lock_needed = true;
+        }
+        else if (!config_->enable_lock_minimized)
+        {
+            lock_needed = true;
+        }
+    }
+
+    std::unique_ptr<InstrumentedLockGuard> lock;
+    if (lock_needed)
+    {
+        lock = std::make_unique<InstrumentedLockGuard>(shared_storage_mutex);
+    }
 
     // Extract domains from outgoing links
     std::vector<std::string> outgoing_domains;
@@ -51,69 +95,286 @@ void StorageManager::add_page(int thread_id, const std::string &domain,
         if (!domain_from_link.empty())
         {
             outgoing_domains.push_back(domain_from_link);
+            if (metrics_)
+            {
+                metrics_->record_graph_edge_inserted();
+            }
         }
     }
 
-    // Store in thread-local buffer
-    buffer.local_graph[domain] = outgoing_domains;
-    buffer.local_visit_count[domain]++;
-    buffer.local_domains.insert(domain);
+    if (config_ && !config_->use_optimized_graph_storage)
+    {
+        auto &buffer = naive_thread_buffers[target_thread_id];
+        for (const auto &out_domain : outgoing_domains)
+        {
+            buffer.edge_list.push_back({domain, out_domain});
+        }
+        
+        bool found = false;
+        for (auto &item : buffer.visit_count_list)
+        {
+            if (item.first == domain)
+            {
+                item.second++;
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            buffer.visit_count_list.push_back({domain, 1});
+        }
+        
+        if (std::find(buffer.local_domains.begin(), buffer.local_domains.end(), domain) == buffer.local_domains.end())
+        {
+            buffer.local_domains.push_back(domain);
+        }
+    }
+    else
+    {
+        auto &buffer = thread_buffers[target_thread_id];
+        // Store in thread-local buffer
+        buffer.local_graph[domain] = outgoing_domains;
+        buffer.local_visit_count[domain]++;
+        buffer.local_domains.insert(domain);
+    }
 }
 
 void StorageManager::merge_all_buffers()
 {
-    std::cout << "\n[INFO] Merging thread-local buffers..." << std::endl;
-
-    for (const auto &buffer : thread_buffers)
+    if (metrics_)
     {
-        // Merge graph
-        for (const auto &[domain, links] : buffer.local_graph)
-        {
-            link_graph[domain] = links;
-        }
-
-        // Merge visit counts
-        for (const auto &[domain, count] : buffer.local_visit_count)
-        {
-            visit_count[domain] += count;
-        }
+        metrics_->start_graph_timer();
     }
 
-    std::cout << "[INFO] Merged " << link_graph.size() << " unique domains" << std::endl;
-
-#if DEBUG_DUMP
-    // Dump per-thread local buffers (one file per thread)
-    for (size_t i = 0; i < thread_buffers.size(); ++i)
+    if (config_ && !config_->use_optimized_graph_storage)
     {
-        std::vector<std::pair<std::string, std::string>> edges;
-        for (const auto &kv : thread_buffers[i].local_graph)
+        merge_all_buffers_naive();
+    }
+    else
+    {
+        std::cout << "\n[INFO] Merging thread-local buffers (Optimized adjacency-list)..." << std::endl;
+
+        for (const auto &buffer : thread_buffers)
         {
-            const auto &src = kv.first;
-            for (const auto &dst : kv.second)
+            // Merge graph
+            for (const auto &[domain, links] : buffer.local_graph)
             {
-                edges.emplace_back(src, dst);
+                link_graph[domain] = links;
+            }
+
+            // Merge visit counts
+            for (const auto &[domain, count] : buffer.local_visit_count)
+            {
+                visit_count[domain] += count;
             }
         }
-        DumpUtils::dump_thread_local_buffer(edges, static_cast<int>(i));
+
+        std::cout << "[INFO] Merged " << link_graph.size() << " unique domains" << std::endl;
     }
 
-    // Dump unified graph
-    DumpUtils::dump_edge_list(link_graph);
+    if (metrics_)
+    {
+        metrics_->stop_graph_timer();
+    }
 
-    // Build outgoing links map and dump domain stats
-    std::unordered_map<std::string, size_t> outgoing;
-    for (const auto &kv : link_graph)
-        outgoing[kv.first] = kv.second.size();
-
-    std::unordered_map<std::string, size_t> visits;
-    for (const auto &kv : visit_count)
-        visits[kv.first] = kv.second;
-
-    DumpUtils::dump_domain_stats(visits, outgoing);
+#if DEBUG_DUMP
+    dump_debug_outputs();
 #endif
 }
 
-void StorageManager::compute_pagerank(int iterations /*= 30*/)
+void StorageManager::merge_all_buffers_naive()
+{
+    std::cout << "\n[INFO] Merging thread-local buffers (Naive O(N^2) edge-list deduplication)..." << std::endl;
+
+    std::vector<std::pair<std::string, std::string>> all_edges;
+    std::vector<std::pair<std::string, int>> all_visits;
+
+    for (const auto &buffer : naive_thread_buffers)
+    {
+        all_edges.insert(all_edges.end(), buffer.edge_list.begin(), buffer.edge_list.end());
+        all_visits.insert(all_visits.end(), buffer.visit_count_list.begin(), buffer.visit_count_list.end());
+    }
+
+    naive_link_graph.clear();
+    for (const auto &edge : all_edges)
+    {
+        bool exists = false;
+        for (const auto &me : naive_link_graph)
+        {
+            if (me == edge)
+            {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists)
+        {
+            naive_link_graph.push_back(edge);
+        }
+    }
+
+    naive_visit_count.clear();
+    for (const auto &item : all_visits)
+    {
+        bool found = false;
+        for (auto &global_item : naive_visit_count)
+        {
+            if (global_item.first == item.first)
+            {
+                global_item.second += item.second;
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            naive_visit_count.push_back(item);
+        }
+    }
+
+    std::cout << "[INFO] Merged " << naive_visit_count.size() << " unique domains naively" << std::endl;
+}
+
+void StorageManager::compute_pagerank(int iterations)
+{
+    if (metrics_)
+    {
+        metrics_->start_pagerank_timer();
+    }
+
+    if (config_ && !config_->use_optimized_pagerank)
+    {
+        compute_pagerank_naive(iterations);
+    }
+    else
+    {
+        pagerank_iteration(iterations);
+    }
+
+    if (metrics_)
+    {
+        metrics_->stop_pagerank_timer();
+    }
+}
+
+void StorageManager::compute_pagerank_naive(int iterations)
+{
+    std::cout << "\n[INFO] Computing PageRank naively (" << iterations << " iterations)..." << std::endl;
+
+    std::vector<std::string> nodes;
+    if (config_ && !config_->use_optimized_graph_storage)
+    {
+        for (const auto &edge : naive_link_graph)
+        {
+            if (std::find(nodes.begin(), nodes.end(), edge.first) == nodes.end())
+            {
+                nodes.push_back(edge.first);
+            }
+            if (std::find(nodes.begin(), nodes.end(), edge.second) == nodes.end())
+            {
+                nodes.push_back(edge.second);
+            }
+        }
+    }
+    else
+    {
+        for (const auto &kv : link_graph)
+        {
+            if (std::find(nodes.begin(), nodes.end(), kv.first) == nodes.end())
+            {
+                nodes.push_back(kv.first);
+            }
+            for (const auto &dst : kv.second)
+            {
+                if (std::find(nodes.begin(), nodes.end(), dst) == nodes.end())
+                {
+                    nodes.push_back(dst);
+                }
+            }
+        }
+    }
+
+    size_t N = nodes.size();
+    if (N == 0)
+    {
+        std::cout << "[WARNING] No nodes to rank (naive)" << std::endl;
+        return;
+    }
+
+    if (metrics_)
+    {
+        metrics_->record_pagerank_nodes(static_cast<int>(N));
+    }
+
+    std::map<std::string, double> pr;
+    for (const auto &n : nodes)
+    {
+        pr[n] = 1.0 / static_cast<double>(N);
+    }
+
+    const double damping = 0.85;
+    const double teleport = (1.0 - damping) / static_cast<double>(N);
+
+    for (int iter = 0; iter < iterations; ++iter)
+    {
+        std::map<std::string, double> new_pr;
+        for (const auto &n : nodes)
+        {
+            new_pr[n] = teleport;
+        }
+
+        for (const auto &src : nodes)
+        {
+            // Recompute out degree of src from graph every iteration
+            int out_deg = 0;
+            std::vector<std::string> outgoing;
+
+            if (config_ && !config_->use_optimized_graph_storage)
+            {
+                for (const auto &edge : naive_link_graph)
+                {
+                    if (edge.first == src)
+                    {
+                        out_deg++;
+                        outgoing.push_back(edge.second);
+                    }
+                }
+            }
+            else
+            {
+                auto it = link_graph.find(src);
+                if (it != link_graph.end())
+                {
+                    out_deg = static_cast<int>(it->second.size());
+                    outgoing = it->second;
+                }
+            }
+
+            if (out_deg > 0)
+            {
+                double contribution = damping * (pr[src] / out_deg);
+                for (const auto &dst : outgoing)
+                {
+                    new_pr[dst] += contribution;
+                }
+            }
+        }
+
+        // NO dangling mass redistribution and NO normalization (as requested for naive PR)
+        pr = new_pr;
+    }
+
+    pagerank.clear();
+    for (const auto &[node, score] : pr)
+    {
+        pagerank[node] = score;
+    }
+
+    std::cout << "[INFO] Naive PageRank computation complete" << std::endl;
+}
+
+void StorageManager::pagerank_iteration(int iterations)
 {
     std::cout << "\n[INFO] Computing PageRank (" << iterations << " iterations)..." << std::endl;
 
@@ -134,6 +395,11 @@ void StorageManager::compute_pagerank(int iterations /*= 30*/)
     {
         std::cout << "[WARNING] No nodes to rank" << std::endl;
         return;
+    }
+
+    if (metrics_)
+    {
+        metrics_->record_pagerank_nodes(static_cast<int>(N));
     }
 
     std::cout << "[INFO] Total nodes (including destination-only): " << N << std::endl;
@@ -238,16 +504,36 @@ void StorageManager::export_to_csv(const std::string &crawled_file,
     std::ofstream crawled_csv(crawled_file);
     crawled_csv << "domain,outgoing_links,visit_count\n";
 
-    for (const auto &[domain, links] : link_graph)
+    if (config_ && !config_->use_optimized_graph_storage)
     {
-        int count = visit_count[domain];
-        crawled_csv << domain << "," << links.size() << "," << count << "\n";
+        for (const auto &item : naive_visit_count)
+        {
+            std::string domain = item.first;
+            int count = item.second;
+            int outgoing_count = 0;
+            for (const auto &edge : naive_link_graph)
+            {
+                if (edge.first == domain)
+                {
+                    outgoing_count++;
+                }
+            }
+            crawled_csv << domain << "," << outgoing_count << "," << count << "\n";
+        }
+    }
+    else
+    {
+        for (const auto &[domain, links] : link_graph)
+        {
+            int count = visit_count[domain];
+            crawled_csv << domain << "," << links.size() << "," << count << "\n";
+        }
     }
 
     crawled_csv.close();
     std::cout << "[INFO] Exported crawled pages to: " << crawled_file << std::endl;
 
-    // Export PageRank results (includes destination-only nodes now)
+    // Export PageRank results
     std::ofstream ranking_csv(ranking_file);
     ranking_csv << "domain,pagerank_score\n";
     ranking_csv << std::fixed << std::setprecision(6);
@@ -264,9 +550,26 @@ void StorageManager::export_to_csv(const std::string &crawled_file,
 std::vector<std::string> StorageManager::get_all_domains() const
 {
     std::vector<std::string> domains;
-    for (const auto &[domain, _] : link_graph)
+    if (config_ && !config_->use_optimized_graph_storage)
     {
-        domains.push_back(domain);
+        for (const auto &edge : naive_link_graph)
+        {
+            if (std::find(domains.begin(), domains.end(), edge.first) == domains.end())
+            {
+                domains.push_back(edge.first);
+            }
+            if (std::find(domains.begin(), domains.end(), edge.second) == domains.end())
+            {
+                domains.push_back(edge.second);
+            }
+        }
+    }
+    else
+    {
+        for (const auto &[domain, _] : link_graph)
+        {
+            domains.push_back(domain);
+        }
     }
     return domains;
 }
@@ -279,6 +582,17 @@ double StorageManager::get_pagerank(const std::string &domain) const
 
 int StorageManager::get_visit_count(const std::string &domain) const
 {
+    if (config_ && !config_->use_optimized_graph_storage)
+    {
+        for (const auto &item : naive_visit_count)
+        {
+            if (item.first == domain)
+            {
+                return item.second;
+            }
+        }
+        return 0;
+    }
     auto it = visit_count.find(domain);
     return (it != visit_count.end()) ? it->second : 0;
 }

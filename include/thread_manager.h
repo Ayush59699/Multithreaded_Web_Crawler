@@ -4,10 +4,14 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <mutex>
 #include "url_frontier.h"
 #include "storage_manager.h"
 #include "downloader.h"
 #include "parser.h"
+#include "crawler_config.h"
+#include "metrics_collector.h"
+
 
 /**
  * Manages worker thread pool
@@ -24,7 +28,9 @@ public:
      */
     void start(int num_threads, int max_pages, 
                const std::string& seed_url,
-               StorageManager& storage_manager);
+               StorageManager& storage_manager,
+               CrawlerConfig* config = nullptr,
+               MetricsCollector* metrics = nullptr);
     
     /**
      * Wait for all threads to complete
@@ -46,6 +52,10 @@ private:
     URLFrontier frontier;
     std::atomic<int> pages_crawled{0};
     std::atomic<int> max_pages_limit{0};
+    
+    CrawlerConfig* config_{nullptr};
+    MetricsCollector* metrics_{nullptr};
+    std::mutex download_mutex;
     
     /**
      * Worker thread main loop

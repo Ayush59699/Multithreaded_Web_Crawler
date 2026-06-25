@@ -13,7 +13,8 @@ public:
      * @return Vector of absolute URLs found
      */
     std::vector<std::string> extract_links(const std::string& html, 
-                                           const std::string& base_url);
+                                           const std::string& base_url,
+                                           bool normalize = true);
     
     /**
      * Extract domain name from full URL

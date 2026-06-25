@@ -5,7 +5,12 @@
 #include <queue>
 #include <unordered_set>
 #include <atomic>
-#include <mutex>
+#include <vector>
+#include <memory>
+#include "crawler_config.h"
+#include "metrics_collector.h"
+#include "instrumented_mutex.h"
+
 
 /**
  * URL frontier with minimal locking
@@ -14,11 +19,15 @@
  */
 class URLFrontier {
 public:
+    URLFrontier();
+
     /**
      * Initialize frontier with seed URL
      * @param seed_url Starting URL
+     * @param config Config pointer
+     * @param metrics Metrics collector pointer
      */
-    void init(const std::string& seed_url);
+    void init(const std::string& seed_url, CrawlerConfig* config = nullptr, MetricsCollector* metrics = nullptr);
     
     /**
      * Try to dequeue next URL to crawl
@@ -86,11 +95,15 @@ public:
 private:
     std::queue<std::string> to_visit;
     std::unordered_set<std::string> visited;
+    std::vector<std::string> visited_list_; // For naive O(n) scan
     std::atomic<bool> is_done{false};
     std::atomic<size_t> queue_size_{0};
     
+    CrawlerConfig* config_{nullptr};
+    MetricsCollector* metrics_{nullptr};
+    
     // Minimal lock - ONLY protects the queue operations
-    mutable std::mutex queue_mutex;
+    mutable InstrumentedMutex queue_mutex;
 };
 
 #endif // URL_FRONTIER_H
