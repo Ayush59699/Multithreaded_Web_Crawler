@@ -2,7 +2,7 @@
 
 A high-performance, lock-free web crawler written in C++17 that discovers and analyzes web pages using concurrent processing. This project is engineered with a **heavy focus on performance profiling and system-level metrics**, featuring custom benchmarking suites, lock contention monitoring, and synthetic web-graph generation.
 
-## 🚀 Performance & Metrics (Resume Highlights)
+## 🚀 Performance & Metrics 
 
 The crawler is built to scale and includes an advanced `MetricsCollector` that records microsecond-level performance data without introducing observer overhead. 
 
