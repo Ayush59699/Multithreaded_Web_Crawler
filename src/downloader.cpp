@@ -55,10 +55,25 @@ std::string Downloader::download(const std::string& url) {
     long http_code = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
     
+    // Check Content-Type
+    char* content_type = nullptr;
+    curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &content_type);
+    
+    std::string ct_str = "";
+    if (content_type != nullptr) {
+        ct_str = Utils::to_lowercase(content_type);
+    }
+    
     curl_easy_cleanup(curl);
     
-    // Only return content for successful responses
+    // Only return content for successful responses and check if it is HTML/XHTML
     if (http_code >= 200 && http_code < 300) {
+        if (!ct_str.empty()) {
+            if (ct_str.find("text/html") == std::string::npos && 
+                ct_str.find("application/xhtml+xml") == std::string::npos) {
+                return "";
+            }
+        }
         return readBuffer;
     }
     

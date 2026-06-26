@@ -28,6 +28,14 @@ public:
      * @param metrics Metrics collector pointer
      */
     void init(const std::string& seed_url, CrawlerConfig* config = nullptr, MetricsCollector* metrics = nullptr);
+
+    /**
+     * Initialize frontier with multiple seed URLs
+     * @param seed_urls Vector of starting URLs
+     * @param config Config pointer
+     * @param metrics Metrics collector pointer
+     */
+    void init(const std::vector<std::string>& seed_urls, CrawlerConfig* config = nullptr, MetricsCollector* metrics = nullptr);
     
     /**
      * Try to dequeue next URL to crawl

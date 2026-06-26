@@ -56,6 +56,18 @@ private:
      * Check if URL is relative
      */
     bool is_relative_url(const std::string& url);
+    
+    /**
+     * Normalize URL path by resolving . and .. segments
+     */
+    std::string normalize_path(const std::string& path);
+    
+    /**
+     * Split path into path-only and query/fragment
+     */
+    void split_path_query_fragment(const std::string& url_or_path, 
+                                   std::string& path, 
+                                   std::string& query_and_fragment);
 };
 
 #endif // PARSER_H

@@ -31,6 +31,19 @@ public:
                StorageManager& storage_manager,
                CrawlerConfig* config = nullptr,
                MetricsCollector* metrics = nullptr);
+
+    /**
+     * Start crawling with multiple worker threads and seed URLs
+     * @param num_threads Number of worker threads
+     * @param max_pages Maximum pages to crawl
+     * @param seed_urls Vector of starting URLs
+     * @param storage_manager Storage manager instance
+     */
+    void start(int num_threads, int max_pages, 
+               const std::vector<std::string>& seed_urls,
+               StorageManager& storage_manager,
+               CrawlerConfig* config = nullptr,
+               MetricsCollector* metrics = nullptr);
     
     /**
      * Wait for all threads to complete

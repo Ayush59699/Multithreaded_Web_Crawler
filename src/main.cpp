@@ -8,19 +8,50 @@
 #include "crawler_config.h"
 #include "metrics_collector.h"
 
+static std::string trim_ws(const std::string& str) {
+    size_t first = str.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return "";
+    size_t last = str.find_last_not_of(" \t\r\n");
+    return str.substr(first, (last - first + 1));
+}
+
+std::vector<std::string> resolve_seed_urls(const std::string& input) {
+    std::vector<std::string> urls;
+    std::ifstream file(input);
+    if (file.is_open()) {
+        std::string line;
+        while (std::getline(file, line)) {
+            std::string url = trim_ws(line);
+            if (!url.empty()) {
+                if (url.find("http://") == 0 || url.find("https://") == 0) {
+                    urls.push_back(url);
+                }
+            }
+        }
+        file.close();
+    } else {
+        std::string url = trim_ws(input);
+        if (url.find("http://") == 0 || url.find("https://") == 0) {
+            urls.push_back(url);
+        }
+    }
+    return urls;
+}
+
 void print_usage(const char* program_name) {
     std::cout << "\n╔═══════════════════════════════════════════════════════════╗" << std::endl;
     std::cout << "║         Multithreaded Web Crawler (Benchmarked)         ║" << std::endl;
     std::cout << "╚═══════════════════════════════════════════════════════════╝" << std::endl;
     std::cout << "\nUsage:" << std::endl;
-    std::cout << "  " << program_name << " <seed_url> <max_pages> <num_threads>" << std::endl;
+    std::cout << "  " << program_name << " <seed_url_or_file> <max_pages> <num_threads>" << std::endl;
     std::cout << "  " << program_name << " --config <config_json_path>" << std::endl;
     std::cout << "\nArguments:" << std::endl;
-    std::cout << "  seed_url     - Starting URL (e.g., http://localhost:8080)" << std::endl;
-    std::cout << "  max_pages    - Maximum number of pages to crawl" << std::endl;
-    std::cout << "  num_threads  - Number of worker threads" << std::endl;
+    std::cout << "  seed_url_or_file - Starting URL or path to text file containing seed URLs (one per line)" << std::endl;
+    std::cout << "  max_pages        - Maximum number of pages to crawl" << std::endl;
+    std::cout << "  num_threads      - Number of worker threads" << std::endl;
     std::cout << "\nExample:" << std::endl;
-    std::cout << "  " << program_name << " http://localhost:8080 50 4" << std::endl;
+    std::cout << "  " << program_name << " https://en.wikipedia.org/wiki/Main_Page 50 4" << std::endl;
+    std::cout << "  " << program_name << " urls.txt 100 4" << std::endl;
     std::cout << "  " << program_name << " --config benchmark.json" << std::endl;
     std::cout << std::endl;
 }
@@ -46,11 +77,15 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // Validate inputs
-    if (config.seed_url.find("http://") != 0 && config.seed_url.find("https://") != 0) {
-        std::cerr << "[ERROR] Seed URL must start with http:// or https://" << std::endl;
+    // Resolve seeds
+    std::vector<std::string> seed_urls = resolve_seed_urls(config.seed_url);
+    if (seed_urls.empty()) {
+        std::cerr << "[ERROR] Invalid starting seed. Must be a valid URL starting with http:// or https://, "
+                  << "or a text file containing valid URLs." << std::endl;
         return 1;
     }
+    
+    // Validate inputs
     if (config.max_pages <= 0) {
         std::cerr << "[ERROR] max_pages must be positive" << std::endl;
         return 1;
@@ -75,7 +110,7 @@ int main(int argc, char* argv[]) {
     
     // Start crawling
     ThreadManager crawler;
-    crawler.start(config.num_threads, config.max_pages, config.seed_url, storage, &config, &metrics);
+    crawler.start(config.num_threads, config.max_pages, seed_urls, storage, &config, &metrics);
     
     // Wait for all threads to complete
     crawler.wait_completion();

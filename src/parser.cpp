@@ -3,6 +3,7 @@
 #include <regex>
 #include <iostream>
 #include <algorithm>
+#include <sstream>
 
 std::vector<std::string> Parser::extract_links(const std::string& html, 
                                                const std::string& base_url,
@@ -85,7 +86,54 @@ bool Parser::is_valid_url(const std::string& url) {
     
     // Must have a domain
     std::string domain = extract_domain(url);
-    return !domain.empty();
+    if (domain.empty()) {
+        return false;
+    }
+    
+    // Extract path and query/fragment
+    std::string path = "/";
+    std::string query_and_fragment = "";
+    size_t scheme_pos = url.find("://");
+    if (scheme_pos != std::string::npos) {
+        size_t slash_pos = url.find('/', scheme_pos + 3);
+        if (slash_pos != std::string::npos) {
+            std::string rest = url.substr(slash_pos);
+            split_path_query_fragment(rest, path, query_and_fragment);
+        }
+    }
+    
+    std::string path_lower = Utils::to_lowercase(path);
+    std::string qf_lower = Utils::to_lowercase(query_and_fragment);
+    
+    // List of ignored extensions
+    const std::vector<std::string> ignored_extensions = {
+        ".css", ".js", ".ico", ".png", ".jpg", ".jpeg", 
+        ".gif", ".svg", ".webp", ".pdf", ".zip", ".xml"
+    };
+    
+    for (const auto& ext : ignored_extensions) {
+        if (Utils::ends_with(path_lower, ext)) {
+            return false;
+        }
+    }
+    
+    // Check for "rss" segment or ".rss" extension in path
+    std::stringstream ss(path_lower);
+    std::string segment;
+    while (std::getline(ss, segment, '/')) {
+        if (segment == "rss" || Utils::ends_with(segment, ".rss")) {
+            return false;
+        }
+    }
+    
+    // Check for RSS in query/fragment safely (e.g. "=rss", "/rss", or ".rss")
+    if (qf_lower.find("=rss") != std::string::npos || 
+        qf_lower.find("/rss") != std::string::npos || 
+        qf_lower.find(".rss") != std::string::npos) {
+        return false;
+    }
+    
+    return true;
 }
 
 std::string Parser::normalize_url(const std::string& url) {
@@ -104,6 +152,21 @@ std::string Parser::normalize_url(const std::string& url) {
         // Convert to lowercase
         normalized = Utils::to_lowercase(normalized);
         
+        // Normalize path segments (remove .. and .)
+        size_t scheme_pos = normalized.find("://");
+        if (scheme_pos != std::string::npos) {
+            std::string scheme = normalized.substr(0, scheme_pos + 3);
+            std::string rest = normalized.substr(scheme_pos + 3);
+            size_t slash_pos = rest.find('/');
+            if (slash_pos != std::string::npos) {
+                std::string auth = rest.substr(0, slash_pos);
+                std::string path = rest.substr(slash_pos);
+                std::string path_only, qf;
+                split_path_query_fragment(path, path_only, qf);
+                normalized = scheme + auth + normalize_path(path_only) + qf;
+            }
+        }
+        
         // Remove trailing slash from domain only (but keep path structure)
         if (normalized.length() > 0 && normalized.back() == '/') {
             // Check if this is just domain/
@@ -119,44 +182,168 @@ std::string Parser::normalize_url(const std::string& url) {
     return normalized;
 }
 
+std::string Parser::normalize_path(const std::string& path) {
+    std::vector<std::string> segments;
+    std::string segment;
+    std::stringstream ss(path);
+    
+    while (std::getline(ss, segment, '/')) {
+        if (segment == "." || segment.empty()) {
+            continue;
+        }
+        if (segment == "..") {
+            if (!segments.empty()) {
+                segments.pop_back();
+            }
+        } else {
+            segments.push_back(segment);
+        }
+    }
+    
+    std::string result;
+    for (const auto& seg : segments) {
+        result += "/" + seg;
+    }
+    
+    if (result.empty()) {
+        return "/";
+    }
+    
+    // Check if original path ended in trailing slash or directory dot reference
+    bool has_trailing_slash = false;
+    if (path.length() > 0) {
+        if (path.back() == '/') {
+            has_trailing_slash = true;
+        } else if (path.length() >= 2 && path.substr(path.length() - 2) == "/.") {
+            has_trailing_slash = true;
+        } else if (path.length() >= 3 && path.substr(path.length() - 3) == "/..") {
+            has_trailing_slash = true;
+        }
+    }
+    
+    if (has_trailing_slash) {
+        result += "/";
+    }
+    
+    return result;
+}
+
+void Parser::split_path_query_fragment(const std::string& url_or_path, 
+                                       std::string& path, 
+                                       std::string& query_and_fragment) {
+    size_t pos = url_or_path.find_first_of("?#");
+    if (pos != std::string::npos) {
+        path = url_or_path.substr(0, pos);
+        query_and_fragment = url_or_path.substr(pos);
+    } else {
+        path = url_or_path;
+        query_and_fragment = "";
+    }
+}
+
 std::string Parser::resolve_relative_url(const std::string& base, 
                                          const std::string& relative) {
     try {
         if (Utils::starts_with(relative, "http://") || 
             Utils::starts_with(relative, "https://")) {
-            return relative;
+            size_t scheme_pos = relative.find("://");
+            std::string rel_scheme = relative.substr(0, scheme_pos + 3);
+            std::string rest = relative.substr(scheme_pos + 3);
+            size_t slash_pos = rest.find('/');
+            if (slash_pos == std::string::npos) {
+                return relative;
+            }
+            std::string rel_auth = rest.substr(0, slash_pos);
+            std::string rel_path = rest.substr(slash_pos);
+            
+            std::string path_only, qf;
+            split_path_query_fragment(rel_path, path_only, qf);
+            return rel_scheme + rel_auth + normalize_path(path_only) + qf;
         }
         
-        // Extract base domain and path
-        std::regex base_regex(R"(^(https?://[^/]+)(/?[^?#]*)?)");
-        std::smatch match;
+        if (Utils::starts_with(relative, "?")) {
+            // Find scheme of base URL
+            size_t scheme_pos = base.find("://");
+            if (scheme_pos == std::string::npos) {
+                return base + relative;
+            }
+            std::string scheme = base.substr(0, scheme_pos + 3);
+            std::string rest = base.substr(scheme_pos + 3);
+            std::string authority, base_path;
+            size_t slash_pos = rest.find('/');
+            if (slash_pos == std::string::npos) {
+                authority = rest;
+                base_path = "/";
+            } else {
+                authority = rest.substr(0, slash_pos);
+                base_path = rest.substr(slash_pos);
+            }
+            std::string base_path_only, base_qf;
+            split_path_query_fragment(base_path, base_path_only, base_qf);
+            return scheme + authority + normalize_path(base_path_only) + relative;
+        }
         
-        if (!std::regex_search(base, match, base_regex)) {
+        if (Utils::starts_with(relative, "#")) {
+            size_t base_frag = base.find('#');
+            std::string base_no_frag = (base_frag != std::string::npos) ? base.substr(0, base_frag) : base;
+            return base_no_frag + relative;
+        }
+        
+        // Find scheme of base URL
+        size_t scheme_pos = base.find("://");
+        if (scheme_pos == std::string::npos) {
+            // Fallback if base is not a valid absolute URL
             return base + "/" + relative;
         }
         
-        std::string base_domain = match[1];
-        std::string base_path = match[2];
+        std::string scheme = base.substr(0, scheme_pos + 3);
+        std::string rest = base.substr(scheme_pos + 3);
         
-        if (Utils::starts_with(relative, "/")) {
-            // Absolute path
-            return base_domain + relative;
-        } else if (Utils::starts_with(relative, "./")) {
-            // Current directory
-            if (base_path.empty() || base_path.back() != '/') {
-                base_path += "/";
-            }
-            return base_domain + base_path + relative.substr(2);
-        } else if (Utils::starts_with(relative, "../")) {
-            // Parent directory - simplified handling
-            return base_domain + "/" + relative;
+        std::string authority;
+        std::string base_path;
+        
+        size_t slash_pos = rest.find('/');
+        if (slash_pos == std::string::npos) {
+            authority = rest;
+            base_path = "/";
         } else {
-            // Relative to current path
-            if (base_path.empty() || base_path.back() != '/') {
-                base_path += "/";
-            }
-            return base_domain + base_path + relative;
+            authority = rest.substr(0, slash_pos);
+            base_path = rest.substr(slash_pos);
         }
+        
+        std::string base_path_only, base_qf;
+        split_path_query_fragment(base_path, base_path_only, base_qf);
+        
+        // Find base directory
+        size_t last_slash = base_path_only.find_last_of('/');
+        std::string base_dir = "/";
+        if (last_slash != std::string::npos) {
+            base_dir = base_path_only.substr(0, last_slash + 1);
+        }
+        
+        std::string rel_path, rel_qf;
+        split_path_query_fragment(relative, rel_path, rel_qf);
+        
+        std::string resolved_path;
+        if (Utils::starts_with(rel_path, "//")) {
+            // Protocol relative
+            std::string proto_rest = rel_path.substr(2);
+            size_t proto_slash = proto_rest.find('/');
+            if (proto_slash == std::string::npos) {
+                return scheme.substr(0, scheme.length() - 1) + rel_path + rel_qf;
+            }
+            std::string proto_auth = proto_rest.substr(0, proto_slash);
+            std::string proto_path = proto_rest.substr(proto_slash);
+            return scheme + proto_auth + normalize_path(proto_path) + rel_qf;
+        } else if (Utils::starts_with(rel_path, "/")) {
+            // Root relative
+            resolved_path = rel_path;
+        } else {
+            // Directory relative
+            resolved_path = base_dir + rel_path;
+        }
+        
+        return scheme + authority + normalize_path(resolved_path) + rel_qf;
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] Exception in resolve_relative_url: " << e.what() << std::endl;
         return base + "/" + relative;

@@ -1,3 +1,12 @@
 seed_url,max_pages,num_threads,total_ms,pages_crawled,throughput
 http://localhost:8080/,50,4,405,53,543.08
 http://localhost:8080/,50,4,404,53,530.42
+https://en.wikipedia.org/wiki/Main_Page,50,4,18195,53,3.11
+https://en.wikipedia.org/wiki/Main_Page,500,16,57236,511,10.96
+https://books.toscrape.com/,10,4,5975,13,2.27
+https://books.toscrape.com/,50,4,18924,53,2.84
+https://books.toscrape.com/,20,4,8772,23,2.69
+https://books.toscrape.com/,100,16,13466,115,8.82
+https://books.toscrape.com/,50,4,16939,53,3.18
+https://books.toscrape.com/,100,16,9958,115,12.06
+https://books.toscrape.com/,500,16,37539,515,13.89

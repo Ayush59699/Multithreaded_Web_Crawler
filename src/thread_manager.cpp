@@ -9,6 +9,15 @@ void ThreadManager::start(int num_threads, int max_pages,
                           StorageManager& storage_manager,
                           CrawlerConfig* config,
                           MetricsCollector* metrics) {
+    std::vector<std::string> seed_urls = { seed_url };
+    start(num_threads, max_pages, seed_urls, storage_manager, config, metrics);
+}
+
+void ThreadManager::start(int num_threads, int max_pages,
+                          const std::vector<std::string>& seed_urls,
+                          StorageManager& storage_manager,
+                          CrawlerConfig* config,
+                          MetricsCollector* metrics) {
     config_ = config;
     metrics_ = metrics;
     max_pages_limit.store(max_pages);
@@ -17,13 +26,18 @@ void ThreadManager::start(int num_threads, int max_pages,
     std::cout << "║      MULTITHREADED WEB CRAWLER (Lock-Free)            ║" << std::endl;
     std::cout << "╚════════════════════════════════════════════════════════╝" << std::endl;
     std::cout << "\n[CONFIG]" << std::endl;
-    std::cout << "  Seed URL:     " << seed_url << std::endl;
-    std::cout << "  Max Pages:    " << max_pages << std::endl;
-    std::cout << "  Threads:      " << num_threads << std::endl;
-    std::cout << "  Mode:         " << ((config_ && !config_->enable_multithreading) ? "Single-Threaded" : "Multithreaded") << std::endl;
+    std::cout << "  Seed URLs Count: " << seed_urls.size() << std::endl;
+    if (seed_urls.size() == 1) {
+        std::cout << "  Seed URL:        " << seed_urls[0] << std::endl;
+    } else if (seed_urls.size() > 1) {
+        std::cout << "  First Seed URL:  " << seed_urls[0] << std::endl;
+    }
+    std::cout << "  Max Pages:       " << max_pages << std::endl;
+    std::cout << "  Threads:         " << num_threads << std::endl;
+    std::cout << "  Mode:            " << ((config_ && !config_->enable_multithreading) ? "Single-Threaded" : "Multithreaded") << std::endl;
     std::cout << "\n[STARTING CRAWL]" << std::endl;
     
-    frontier.init(seed_url, config_, metrics_);
+    frontier.init(seed_urls, config_, metrics_);
     
     if (metrics_) {
         metrics_->start_crawl_timer();

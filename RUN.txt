@@ -1,22 +1,18 @@
-If you are running directly inside your WSL (Ubuntu) terminal, here are the native bash 
-commands:
+Run from WSL terminal:
 
-Step 1: Start the Synthetic Web Server in the background
-(The `&` at the end runs the server in the background so you can keep using the same terminal)
-```bash
-python3 synthetic_server.py --pages 200 --links 10 --port 8080 &
-```
+1. cd "/mnt/d/ANTIGRAVITY TESTS/GOOGLE Projects/MultiThreaded Web Crawler/multithreaded-web-crawler"
 
-Step 2: Run the Crawler
-With the server running, you can launch the crawler in the same terminal:
-```bash
-./build/crawler http://localhost:8080/ 50 4
-```
+Build:
+cd build && cmake .. && make -j$(nproc)
 
-Step 3: Run the Full Benchmark Suite (Optional)
-If you want to run the automated benchmarking trials that compare multithreading and graph storage optimizations, you can run:
-```bash
-./build/benchmark_runner
-```
 
-(Note: Once you're done testing, you can stop the background Python server by typing `fg` to bring it to the foreground, then pressing `Ctrl+C`).
+2. Run the Crawler (two ways):
+
+   Single URL:
+   ./build/crawler https://books.toscrape.com/ 100 16
+
+   File of URLs (put your URLs in urls.txt, one per line):
+   ./build/crawler urls.txt 100 4
+
+3. Rebuild after code changes:
+   cd build && cmake .. && make -j$(nproc)

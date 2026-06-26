@@ -5,6 +5,11 @@
 URLFrontier::URLFrontier() : queue_mutex(nullptr, InstrumentedMutex::Category::QUEUE) {}
 
 void URLFrontier::init(const std::string& seed_url, CrawlerConfig* config, MetricsCollector* metrics) {
+    std::vector<std::string> seed_urls = { seed_url };
+    init(seed_urls, config, metrics);
+}
+
+void URLFrontier::init(const std::vector<std::string>& seed_urls, CrawlerConfig* config, MetricsCollector* metrics) {
     config_ = config;
     metrics_ = metrics;
     queue_mutex.set_metrics(metrics);
@@ -14,13 +19,18 @@ void URLFrontier::init(const std::string& seed_url, CrawlerConfig* config, Metri
     visited.clear();
     visited_list_.clear();
 
-    to_visit.push(seed_url);
-    if (config_ && !config_->use_optimized_duplicate_detection) {
-        visited_list_.push_back(seed_url);
-    } else {
-        visited.insert(seed_url);
+    size_t initial_size = 0;
+    for (const auto& url : seed_urls) {
+        if (url.empty() || url.length() > 10000) continue;
+        to_visit.push(url);
+        if (config_ && !config_->use_optimized_duplicate_detection) {
+            visited_list_.push_back(url);
+        } else {
+            visited.insert(url);
+        }
+        initial_size++;
     }
-    queue_size_.store(1);
+    queue_size_.store(initial_size);
     is_done.store(false);
 }
 
