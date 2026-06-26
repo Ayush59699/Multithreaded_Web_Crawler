@@ -1,6 +1,6 @@
 Run from WSL terminal:
 
-1. cd "/mnt/d/ANTIGRAVITY TESTS/GOOGLE Projects/MultiThreaded Web Crawler/multithreaded-web-crawler"
+cd "/mnt/d/ANTIGRAVITY TESTS/GOOGLE Projects/MultiThreaded Web Crawler/multithreaded-web-crawler"
 
 Build:
 cd build && cmake .. && make -j$(nproc)
@@ -9,10 +9,10 @@ cd build && cmake .. && make -j$(nproc)
 2. Run the Crawler (two ways):
 
    Single URL:
-   ./build/crawler https://books.toscrape.com/ 100 16
+   ./build/crawler https://books.toscrape.com/ 1000 32
 
    File of URLs (put your URLs in urls.txt, one per line):
-   ./build/crawler urls.txt 100 4
+   ./build/crawler urls.txt 50000 32
 
 3. Rebuild after code changes:
    cd build && cmake .. && make -j$(nproc)

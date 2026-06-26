@@ -14,39 +14,62 @@ std::vector<std::string> Parser::extract_links(const std::string& html,
         return links;
     }
     
-    try {
-        // Regex to match href attributes in anchor tags
-        std::regex href_regex(R"(href\s*=\s*[\"']([^\"']+)[\"'])");
-        std::smatch match;
-        
-        std::string::const_iterator searchStart(html.cbegin());
-        
-        while (std::regex_search(searchStart, html.cend(), match, href_regex)) {
-            std::string url = match[1];
-            
-            // Validate extracted URL
-            if (url.empty() || url.length() > 10000) {
-                searchStart = match.suffix().first;
-                continue;
+    size_t pos = 0;
+    size_t len = html.length();
+    
+    while (pos < len) {
+        // Search for 'h' or 'H'
+        if (html[pos] == 'h' || html[pos] == 'H') {
+            if (pos + 4 < len) {
+                // Check if it is "href" case-insensitive
+                if ((html[pos+1] == 'r' || html[pos+1] == 'R') &&
+                    (html[pos+2] == 'e' || html[pos+2] == 'E') &&
+                    (html[pos+3] == 'f' || html[pos+3] == 'F')) {
+                    
+                    size_t idx = pos + 4;
+                    // Skip whitespace
+                    while (idx < len && (html[idx] == ' ' || html[idx] == '\t' || html[idx] == '\r' || html[idx] == '\n')) {
+                        idx++;
+                    }
+                    // Check for '='
+                    if (idx < len && html[idx] == '=') {
+                        idx++; // skip '='
+                        // Skip whitespace after '='
+                        while (idx < len && (html[idx] == ' ' || html[idx] == '\t' || html[idx] == '\r' || html[idx] == '\n')) {
+                            idx++;
+                        }
+                        // Check for quote
+                        if (idx < len && (html[idx] == '"' || html[idx] == '\'')) {
+                            char quote = html[idx];
+                            idx++; // skip quote
+                            size_t start = idx;
+                            while (idx < len && html[idx] != quote) {
+                                idx++;
+                            }
+                            if (idx < len) {
+                                std::string url = html.substr(start, idx - start);
+                                
+                                // Process the extracted URL
+                                if (!url.empty() && url.length() <= 10000) {
+                                    if (is_relative_url(url)) {
+                                        url = resolve_relative_url(base_url, url);
+                                    }
+                                    if (normalize) {
+                                        url = normalize_url(url);
+                                    }
+                                    if (is_valid_url(url)) {
+                                        links.push_back(url);
+                                    }
+                                }
+                            }
+                            pos = idx + 1;
+                            continue;
+                        }
+                    }
+                }
             }
-            
-            // Resolve relative URLs
-            if (is_relative_url(url)) {
-                url = resolve_relative_url(base_url, url);
-            }
-            
-            // Normalize and validate
-            if (normalize) {
-                url = normalize_url(url);
-            }
-            if (is_valid_url(url)) {
-                links.push_back(url);
-            }
-            
-            searchStart = match.suffix().first;
         }
-    } catch (const std::exception& e) {
-        std::cerr << "[ERROR] Exception in extract_links: " << e.what() << std::endl;
+        pos++;
     }
     
     return links;

@@ -1,3 +1,2 @@
-https://en.wikipedia.org/wiki/Web_crawler
-https://en.wikipedia.org/wiki/Search_engine
-https://en.wikipedia.org/wiki/PageRank
+https://www.wikipedia.org/
+https://books.toscrape.com/
